@@ -24,6 +24,7 @@ import org.apache.axiom.om.OMElement;
 import org.apache.axiom.om.impl.builder.StAXOMBuilder;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
+import org.apache.http.StatusLine;
 import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
@@ -53,12 +54,17 @@ public class Harvester {
 	private boolean hasResumptionToken = false;
 	private boolean hasIdentifierResumptionToken = false;
 	private boolean hasSetResumptionToken = false;
+	private boolean debugging = false;
+	
+	private static final String version = "0.1";
 	
 	/**
 	 * Constructs the harvester using a repository URL.
 	 * @param baseUrl A repository valid URL.
 	 */
-	public Harvester(String baseUrl)  {
+	public Harvester(String baseUrl) throws Exception {
+		if(baseUrl==null || baseUrl.isEmpty())
+			throw new Exception("baseUrl cannot be null");
 		recordList = new ArrayList<Record>();
 		this.baseUrl = baseUrl;
 		deleteTmpFile(getMD5Filename(baseUrl));
@@ -70,7 +76,9 @@ public class Harvester {
 	 * @param useHarvestFromFile A boolean flag.
 	 * @throws FileNotFoundException If the file does not exists yet.
 	 */
-	public Harvester(String baseUrl, boolean useHarvestFromFile) throws FileNotFoundException  {
+	public Harvester(String baseUrl, boolean useHarvestFromFile) throws FileNotFoundException, Exception  {
+		if(baseUrl==null || baseUrl.isEmpty())
+			throw new Exception("baseUrl cannot be null");
 		recordList = new ArrayList<Record>();
 		this.baseUrl = baseUrl;
 		this.useHarvestFromFile = useHarvestFromFile;
@@ -79,12 +87,42 @@ public class Harvester {
 		}
 	}
 		
-	private OMElement getReaderFromHttpGet(String baseUrl,String verb) throws ClientProtocolException, IOException, XMLStreamException  {
-		HttpClient httpclient = new DefaultHttpClient();
+	private OMElement getReaderFromHttpGet(String baseUrl,String verb) throws ClientProtocolException, IOException, XMLStreamException, InterruptedException  {
+		HttpClient httpclient = new DefaultHttpClient();		
 		HttpGet httpget = new HttpGet(baseUrl+"?verb="+verb);
+		httpget.addHeader("User-Agent", "joailib v"+version);
+		httpget.addHeader("From", "david.uvalle@gmail.com");
+		
 		HttpResponse response = null;
 		try {
 			response = httpclient.execute(httpget);
+			StatusLine status = response.getStatusLine();
+			
+			if(debugging) {
+				System.out.println(response.getStatusLine());
+				org.apache.http.Header[] header =  response.getAllHeaders();
+				for(int i=0;i<header.length;i++) {
+					System.out.println(header[i].getName()+" value: "+header[i].getValue());
+				}
+			}
+			
+			if(status.getStatusCode() == 503)
+			{
+				org.apache.http.Header[] headers = response.getAllHeaders();
+				for(int i=0;i<headers.length;i++) {
+					if(headers[i].getName().equals("Retry-After")) {
+						String retry_time = headers[i].getValue();
+						Thread.sleep(Integer.parseInt(retry_time)*1000);
+						httpclient.getConnectionManager().shutdown();
+						httpclient = new DefaultHttpClient();
+						response = httpclient.execute(httpget);
+					}
+				}
+			}
+			
+		
+			
+			
 		}
 		catch(ClientProtocolException clientProtocolException) {
 			throw new ClientProtocolException(clientProtocolException);
@@ -198,10 +236,12 @@ public class Harvester {
 		List<Header> listIdentifiers = new ArrayList<Header>();
 		List<Header> tmpListIdentifiers = null;
 		listIdentifiers = listIdentifiers("",null,null,null);
+		
 		if(hasIdentifierResumptionToken) {
 			while(!this.identifiersResumptionToken.isEmpty()) 
 			{
 				tmpListIdentifiers = listIdentifiers(this.identifiersResumptionToken,null,null,null);
+				
 				for(Header h:tmpListIdentifiers) 
 				{
 					listIdentifiers.add(h);
@@ -804,17 +844,5 @@ public class Harvester {
 		}
 	}
 	
-	public static void main(String[] args) {
-		try {
-		Harvester harvester = new Harvester("http://catarina.udlap.mx/u_dl_a/tales/oai/requestETD.jsp",true);
-		
-			RecordIterator it =  harvester.listRecords();
-			while(it.hasNext()) {
-				Record record = it.next();
-				System.out.println(record.getMetadata().getCreatorList().get(0));
-			}
-		}
-		catch(Exception e) { }
-	}
 	
 }
